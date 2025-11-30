@@ -4,19 +4,14 @@ import uuid
 import enum
 from db import Base
 
-# Function to generate unique IDs
 def gen_id():
     return str(uuid.uuid4())
-
-# Enum for difficulty levels
+    
 class Difficulty(str, enum.Enum):
     easy = "easy"
     medium = "medium"
     hard = "hard"
-
-# -------------------
-# USERS TABLE
-# -------------------
+    
 class User(Base):
     __tablename__ = "users"
     id = Column(String(50), primary_key=True, default=gen_id)
@@ -26,9 +21,6 @@ class User(Base):
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-# -------------------
-# QUESTIONS TABLE
-# -------------------
 class Question(Base):
     __tablename__ = "questions"
     id = Column(String(50), primary_key=True, default=gen_id)
@@ -38,23 +30,6 @@ class Question(Base):
     difficulty = Column(Enum(Difficulty), nullable=False)
     subject = Column(String(100), nullable=False)
 
-# -------------------
-# EXAM TEMPLATES TABLE
-# -------------------
-class ExamTemplate(Base):
-    __tablename__ = "exam_templates"
-    id = Column(String(50), primary_key=True, default=gen_id)
-    subject = Column(String(100), unique=True, nullable=False)
-    description = Column(Text)
-    question_count = Column(Integer, default=10)
-    duration_minutes = Column(Integer, default=30)
-    is_active = Column(Boolean, default=True)
-    created_by = Column(String(50), nullable=False)  # admin user id
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-# -------------------
-# CANDIDATE EXAMS TABLE
-# -------------------
 class CandidateExam(Base):
     __tablename__ = "candidate_exams"
     id = Column(String(50), primary_key=True, default=gen_id)
