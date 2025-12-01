@@ -1,6 +1,5 @@
 
-from dotenv import load_dotenv
-import os
+
 
 from datetime import datetime, timedelta
 from typing import Generator
@@ -135,5 +134,6 @@ def login(
     token = create_access_token({"sub": db_user.email})
 
     return {"access_token": token, "token_type": "bearer"}
+
 
 
