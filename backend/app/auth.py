@@ -1,4 +1,4 @@
-# backend/app/auth.py
+
 from dotenv import load_dotenv
 import os
 
@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from . import schemas, models, db
 load_dotenv()
 
-# -------------------- CONFIG --------------------
+
 SECRET_KEY = "supersecret-nmk-demo-key"  # change in production!
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 1 day
@@ -25,7 +25,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
 router = APIRouter()
 
 
-# -------------------- DATABASE DEPENDENCY --------------------
+
 def get_db() -> Generator:
     database = db.SessionLocal()
     try:
@@ -34,7 +34,7 @@ def get_db() -> Generator:
         database.close()
 
 
-# -------------------- PASSWORD UTILS --------------------
+
 def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
@@ -65,7 +65,7 @@ def authenticate_user(db: Session, email: str, password: str):
     return user
 
 
-# -------------------- GET CURRENT USER --------------------
+
 def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
@@ -91,7 +91,7 @@ def get_current_user(
     return user
 
 
-# -------------------- REGISTER USER --------------------
+
 @router.post("/register", response_model=schemas.RegisterIn)
 def register(user: schemas.RegisterIn, db: Session = Depends(get_db)):
     existing = db.query(models.User).filter(models.User.email == user.email).first()
@@ -112,7 +112,7 @@ def register(user: schemas.RegisterIn, db: Session = Depends(get_db)):
     return {"email": new_user.email, "password": user.password, "name": new_user.name}
 
 
-# -------------------- LOGIN (FINAL FIXED VERSION) --------------------
+
 @router.post("/login", response_model=schemas.Token)
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
@@ -135,3 +135,4 @@ def login(
     token = create_access_token({"sub": db_user.email})
 
     return {"access_token": token, "token_type": "bearer"}
+
