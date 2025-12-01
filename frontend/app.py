@@ -52,7 +52,7 @@ def api_get(path, headers=None):
 
 
 def login_ui():
-    st.title("🎓 NMK Certification Portal")
+    st.title(" NMK Certification Portal")
     st.subheader("Login to Your Account")
 
     with st.form("login_form"):
@@ -184,9 +184,9 @@ def exam_ui():
         m, s = divmod(st.session_state["time_remaining"], 60)
         
         if st.session_state["time_remaining"] <= 300:
-            st.error(f"⏰ {m:02d}:{s:02d}")
+            st.error(f" {m:02d}:{s:02d}")
         else:
-            st.info(f"⏰ {m:02d}:{s:02d}")
+            st.info(f" {m:02d}:{s:02d}")
         
         saved_count = len(st.session_state["last_saved"])
         total_questions = len(questions)
@@ -365,3 +365,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
