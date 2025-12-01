@@ -43,7 +43,7 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-# -------------------- JWT UTILS --------------------
+
 def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
@@ -135,4 +135,5 @@ def login(
     token = create_access_token({"sub": db_user.email})
 
     return {"access_token": token, "token_type": "bearer"}
+
 
