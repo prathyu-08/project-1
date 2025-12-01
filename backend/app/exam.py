@@ -45,7 +45,7 @@ def create_candidate_exam(db: Session, user_id: str, duration_secs: int = 1800, 
     db.commit()
     db.refresh(ce)
     return ce
-
+ #to check the score
 def compute_score(db: Session, candidate_exam: CandidateExam):
     # load questions and compute correctness
     if not candidate_exam.question_ids:
