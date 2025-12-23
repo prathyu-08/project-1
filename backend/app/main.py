@@ -31,82 +31,60 @@ Base.metadata.create_all(bind=engine)
 
 LLM_API_URL = os.getenv("LLM_API_URL")
 
-
 # LLM RESPONSE PARSER
 
 
 def parse_llm_response(raw_text: str):
-    import json
-    import re
+    import json, re
 
     if not raw_text:
         return []
 
-    text = raw_text.strip()
+    # Remove markdown fences
+    text = re.sub(r"```json|```", "", raw_text, flags=re.IGNORECASE).strip()
 
-    # 1️⃣ Remove markdown code fences
-    text = re.sub(r"```json|```", "", text, flags=re.IGNORECASE).strip()
-
-    # 2️⃣ Extract JSON array (best effort)
+    # Find array start
     start = text.find("[")
-    end = text.rfind("]")
-
     if start == -1:
         return []
 
-    if end == -1:
-        # JSON cut off → close array manually
-        text = text[start:] + "]"
-    else:
-        text = text[start:end + 1]
-
-    # 3️⃣ Remove trailing commas before ] or }
-    text = re.sub(r",\s*]", "]", text)
-    text = re.sub(r",\s*}", "}", text)
-
-    # 4️⃣ Parse JSON safely
-    try:
-        data = json.loads(text)
-    except Exception as e:
-        print("❌ FINAL JSON PARSE FAILED")
-        print(text)
-        return []
+    text = text[start:]  # do NOT force closing ]
 
     questions = []
 
-    for item in data:
-        question = (
-            item.get("Question")
-            or item.get("question")
-        )
+    # 🔥 Extract COMPLETE JSON OBJECTS ONLY
+    blocks = re.findall(r"\{[^{}]*\}", text, re.DOTALL)
 
-        options = (
-            item.get("Options")
-            or item.get("options")
-        )
-
-        answer_text = (
-            item.get("Answer")
-            or item.get("answer")
-        )
-
-        if not question or not options or not answer_text:
+    for block in blocks:
+        try:
+            item = json.loads(block)
+        except Exception:
             continue
 
-        # Convert answer → index
-        answer_index = 0
-        for i, opt in enumerate(options):
-            if str(opt).strip() == str(answer_text).strip():
+        q = item.get("Question")
+        opts = item.get("Options")
+        ans = item.get("Answer")
+
+        if not q or not opts or not ans:
+            continue
+
+        answer_index = None
+        for i, opt in enumerate(opts):
+            if str(opt).strip() == str(ans).strip():
                 answer_index = i
                 break
 
+        if answer_index is None:
+            continue
+
         questions.append({
-            "question": question,
-            "options": options,
+            "question": q,
+            "options": opts,
             "answer_index": answer_index
         })
 
     return questions
+
 
 
 # AUTH 
@@ -160,25 +138,49 @@ def create_exam(
     if not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Admin only")
 
+    TOTAL_QUESTIONS = exam_data.question_count
+    BATCH_SIZE = 10
+    MAX_ATTEMPTS = 30
+
+    all_questions = []
+    attempts = 0
+
     try:
-        response = requests.get(
-            LLM_API_URL,
-            headers={"Content-Type": "application/json"},
-            data=json.dumps({
-                "questionscount": exam_data.question_count,
-                "language": exam_data.language
-            }),
-            timeout=30
-        )
+        # 🔁 Generate questions in batches
+        while len(all_questions) < TOTAL_QUESTIONS and attempts < MAX_ATTEMPTS:
+            attempts += 1
 
-        if response.status_code != 200:
-            raise HTTPException(status_code=500, detail=response.text)
+            batch_count = min(BATCH_SIZE, TOTAL_QUESTIONS - len(all_questions))
 
-        llm_questions = parse_llm_response(response.text)
+            response = requests.get(
+                LLM_API_URL,
+                json={
+                    "questionscount": batch_count,
+                    "language": exam_data.language
+                },
+                timeout=90
+            )
 
-        if not llm_questions:
-            raise HTTPException(status_code=500, detail="Failed to parse LLM questions")
+            if response.status_code != 200:
+                continue
 
+            batch_questions = parse_llm_response(response.text)
+
+            if not batch_questions:
+                continue
+
+            all_questions.extend(batch_questions)
+
+        # ✅ FINAL CHECK (AFTER LOOP)
+        if len(all_questions) < TOTAL_QUESTIONS:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Could only generate {len(all_questions)} questions after retries"
+            )
+
+        llm_questions = all_questions[:TOTAL_QUESTIONS]
+
+        # 🧾 Create Exam ONCE
         new_exam = models.Exam(
             title=exam_data.title,
             language=exam_data.language,
@@ -190,6 +192,7 @@ def create_exam(
         db.add(new_exam)
         db.flush()
 
+        # 🧾 Insert Questions
         for q in llm_questions:
             db.add(models.Question(
                 text=q["question"],
@@ -206,7 +209,7 @@ def create_exam(
         db.rollback()
         print(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
-    
+
 
 @app.post("/admin/exams/{exam_id}/assign")
 def assign_exam(
@@ -228,7 +231,8 @@ def assign_exam(
     if not exam_obj:
         raise HTTPException(status_code=404, detail="Exam not found")
 
-    DEFAULT_PASSWORD = "welcome@123"   # 🔐 change if needed
+    DEFAULT_PASSWORD = os.getenv("DEFAULT_PASSWORD")
+
 
     assigned_count = 0
     emailed_count = 0
@@ -429,61 +433,35 @@ def list_available_exams(current_user: models.User = Depends(auth.get_current_us
 
 
 
-
-#/exam/{exam_id}/start endpoint in main.py:
-
 @app.post("/exam/{exam_id}/start", response_model=schemas.CandidateExamCreateOut)
-def start_exam(
-    exam_id: str,
-    current_user: models.User = Depends(auth.get_current_user),
-    db: Session = Depends(auth.get_db)
-):
-    # 🔍 Check if user already has an active exam (ANY exam)
-    # REMOVED ended_at.is_(None) - status is enough!
-    existing_exam = db.query(models.CandidateExam).filter(
+def start_exam(exam_id: str, current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(auth.get_db)):
+    # Check if exam is assigned to this candidate
+    assignment = db.query(models.ExamAssignment).filter(
+        and_(
+            models.ExamAssignment.exam_id == exam_id,
+            models.ExamAssignment.candidate_email == current_user.email
+        )
+    ).first()
+    
+    if not assignment:
+        raise HTTPException(status_code=403, detail="This exam is not assigned to you")
+    
+    existing = db.query(models.CandidateExam).filter(
         models.CandidateExam.user_id == current_user.id,
         models.CandidateExam.status == "in_progress"
     ).first()
 
-    if existing_exam:
-        # If it's the same exam, return it for resume
-        if existing_exam.exam_id == exam_id:
-            print(f"✅ User {current_user.email} resuming existing exam {existing_exam.id}")
-            return existing_exam
-        else:
-            # Different exam in progress - prevent starting new one
-            raise HTTPException(
-                status_code=400, 
-                detail="You already have an exam in progress. Please complete or abandon it first."
-            )
-
-    # 🔍 Validate assignment
-    assignment = db.query(models.ExamAssignment).filter(
-        models.ExamAssignment.exam_id == exam_id,
-        models.ExamAssignment.candidate_email == current_user.email
-    ).first()
-
-    if not assignment:
-        raise HTTPException(status_code=403, detail="Not assigned to this exam")
-
-    # 🔍 Validate exam exists and is active
-    exam_obj = db.query(models.Exam).filter(
-        models.Exam.id == exam_id,
-        models.Exam.is_active == True
-    ).first()
-
+    if existing:
+        return existing
+    
+    exam_obj = db.query(models.Exam).filter(models.Exam.id == exam_id, models.Exam.is_active == True).first()
     if not exam_obj:
-        raise HTTPException(status_code=404, detail="Exam not found or inactive")
+        raise HTTPException(status_code=404, detail="Exam not found")
 
-    # 🔍 Load questions
-    questions = db.query(models.Question).filter(
-        models.Question.exam_id == exam_id
-    ).all()
-
+    questions = db.query(models.Question).filter(models.Question.exam_id == exam_id).all()
     if not questions:
-        raise HTTPException(status_code=500, detail="No questions found for this exam")
+        raise HTTPException(status_code=400, detail="No questions found")
 
-    # 🆕 Create new candidate exam
     candidate_exam = models.CandidateExam(
         user_id=current_user.id,
         exam_id=exam_id,
@@ -491,25 +469,16 @@ def start_exam(
         answers={},
         time_allowed_secs=exam_obj.time_allowed_secs,
         time_elapsed=0,
-        status="in_progress",
-        started_at=datetime.utcnow(),
-        ended_at=None  # ✅ EXPLICITLY set to None
+        status="in_progress"
     )
-
     db.add(candidate_exam)
+    
+    # Update assignment status
     assignment.status = "started"
+    
     db.commit()
     db.refresh(candidate_exam)
-
-    print(f"\n{'='*60}")
-    print(f"✅ NEW EXAM STARTED")
-    print(f"   User: {current_user.email}")
-    print(f"   Exam ID: {candidate_exam.id}")
-    print(f"   Questions: {len(questions)}")
-    print(f"{'='*60}\n")
-
     return candidate_exam
-
 
 @app.get("/exam/{candidate_exam_id}")
 def get_exam(
@@ -575,52 +544,21 @@ def save_answer(
     return {"msg": "answer_saved"}
 
 
-# Replace the /exam/resume endpoint in main.py with this:
-
 @app.get("/exam/resume")
 def resume_exam(
     current_user: models.User = Depends(auth.get_current_user),
     db: Session = Depends(auth.get_db)
 ):
-    import sys
-    
-    # ✅ IMMEDIATE DEBUG - Print user info
-    print("=" * 80, flush=True)
-    print(f"RESUME ENDPOINT CALLED", flush=True)
-    print(f"Current user email: {current_user.email}", flush=True)
-    print(f"Current user ID: {current_user.id}", flush=True)
-    print("=" * 80, flush=True)
-    sys.stdout.flush()
-    
-    # Query with explicit logging
-    candidate_exam = db.query(models.CandidateExam).filter(
+    exam = db.query(models.CandidateExam).filter(
         models.CandidateExam.user_id == current_user.id,
         models.CandidateExam.status == "in_progress"
-    ).order_by(models.CandidateExam.started_at.desc()).first()
-    
-    print(f"Query result: {candidate_exam}", flush=True)
-    print(f"Found exam: {'YES' if candidate_exam else 'NO'}", flush=True)
-    sys.stdout.flush()
+    ).first()
 
-    if not candidate_exam:
-        # Debug all exams
-        all_exams = db.query(models.CandidateExam).filter(
-            models.CandidateExam.user_id == current_user.id
-        ).all()
-        
-        print(f"Total exams for user: {len(all_exams)}", flush=True)
-        for exam in all_exams:
-            print(f"  Exam: {exam.id}, Status: {exam.status}, User: {exam.user_id}", flush=True)
-        sys.stdout.flush()
-        
-        raise HTTPException(
-            status_code=404, 
-            detail=f"No exam found for user {current_user.id}"
-        )
+    if not exam:
+        raise HTTPException(status_code=404, detail="No active exam")
 
-    # Load questions
     questions = []
-    for qid in candidate_exam.question_ids or []:
+    for qid in exam.question_ids or []:
         q = db.query(models.Question).filter(models.Question.id == qid).first()
         if q:
             questions.append({
@@ -629,26 +567,17 @@ def resume_exam(
                 "choices": q.choices
             })
 
-    print(f"✅ RESUME SUCCESS - Exam: {candidate_exam.id}", flush=True)
-    sys.stdout.flush()
-
     return {
-        "candidate_exam_id": candidate_exam.id,
+        "candidate_exam_id": exam.id,
+        "exam_id": exam.exam_id,
         "questions": questions,
-        "answers": candidate_exam.answers or {},
-        "time_allowed_secs": candidate_exam.time_allowed_secs,
-        "time_elapsed": candidate_exam.time_elapsed,
-        "status": "in_progress"
+        "answers": exam.answers or {},
+        "time_allowed_secs": exam.time_allowed_secs,
+        "time_elapsed": exam.time_elapsed,
+        "status": exam.status
     }
 
-@app.get("/test-debug")
-def test_debug():
-    import sys
-    print("=" * 60, flush=True)
-    print("TEST ENDPOINT HIT", flush=True)
-    print("=" * 60, flush=True)
-    sys.stdout.flush()
-    return {"msg": "test successful", "timestamp": datetime.utcnow()}
+
 
 
 @app.post("/exam/{candidate_exam_id}/submit")
