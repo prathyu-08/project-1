@@ -59,7 +59,8 @@ class CandidateExam(Base):
     answers = Column(JSON, nullable=True)  # mapping question_id -> selected index
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     ended_at = Column(DateTime, nullable=True)
-    status = Column(String, default="in_progress")  # in_progress/completed/timed_out
+    status = Column(String, default="not_started")  # in_progress/completed/timed_out
     time_allowed_secs = Column(Integer, default=1800)
     time_elapsed = Column(Integer, default=0)  # seconds
+
     score = Column(Integer, default=0)
