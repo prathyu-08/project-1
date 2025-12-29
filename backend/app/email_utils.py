@@ -11,6 +11,7 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 EMAIL_FROM = os.getenv("EMAIL_FROM")
 EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
 PORTAL_URL = os.getenv("PORTAL_URL")
+default_password = os.getenv("DEFAULT_CANDIDATE_PASSWORD")
 
 # 🔍 HARD DEBUG (TEMP)
 print("🔍 SMTP_SERVER:", SMTP_SERVER)
@@ -33,6 +34,9 @@ Hello,
 You have been assigned a new exam.
 
 📘 Exam Title: {exam_title}
+
+email: {to_email}
+password : {default_password}
 
 🔗 Portal:
 {PORTAL_URL}
